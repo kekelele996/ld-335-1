@@ -49,6 +49,20 @@ class SettlementConfirmRequest(BaseModel):
     pre_settlement: PreSettlementResponse
 
 
+class SettlementItemResponse(BaseModel):
+    item_code: str
+    name: str
+    category: str
+    catalog_class: str
+    unit_price: Decimal
+    quantity: Decimal
+    amount: Decimal
+    self_pay_ratio: Decimal
+
+    class Config:
+        from_attributes = True
+
+
 class SettlementResponse(BaseModel):
     settlement_no: str
     batch_no: str
@@ -58,6 +72,7 @@ class SettlementResponse(BaseModel):
     self_pay_amount: Decimal
     status: str
     created_at: datetime
+    items: list[SettlementItemResponse] | None = None
 
     class Config:
         from_attributes = True

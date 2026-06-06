@@ -1,3 +1,3 @@
-from app.models.settlement import SettlementRecord
+from app.models.settlement import SettlementItem, SettlementRecord
 
-__all__ = ["SettlementRecord"]
+__all__ = ["SettlementItem", "SettlementRecord"]

@@ -4,10 +4,10 @@ from uuid import uuid4
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.core.messages import ErrorMessages
-from app.models.settlement import SettlementRecord
+from app.models.settlement import SettlementItem, SettlementRecord
 from app.schemas.settlement import ExpenseUploadRequest, ExpenseUploadResponse, PreSettlementRequest, PreSettlementResponse, SettlementConfirmRequest, SettlementResponse
 
 
@@ -39,8 +39,9 @@ def pre_settle(payload: PreSettlementRequest, principal: dict) -> PreSettlementR
 
 
 def confirm_settlement(payload: SettlementConfirmRequest, db: Session, principal: dict) -> SettlementResponse:
+    settlement_no = f"JS{uuid4().hex[:14].upper()}"
     record = SettlementRecord(
-        settlement_no=f"JS{uuid4().hex[:14].upper()}",
+        settlement_no=settlement_no,
         batch_no=payload.batch_no,
         insured_id=payload.insured_id,
         total_amount=payload.pre_settlement.total_amount,
@@ -49,13 +50,34 @@ def confirm_settlement(payload: SettlementConfirmRequest, db: Session, principal
         status="SUCCESS",
     )
     db.add(record)
+
+    items = [
+        SettlementItem(
+            settlement_no=settlement_no,
+            item_code=detail.item_code,
+            name=detail.name,
+            category=detail.category,
+            catalog_class=detail.catalog_class,
+            unit_price=detail.unit_price,
+            quantity=detail.quantity,
+            amount=detail.amount,
+            self_pay_ratio=detail.self_pay_ratio,
+        )
+        for detail in payload.pre_settlement.details
+    ]
+    db.add_all(items)
+
     db.commit()
     db.refresh(record)
     return SettlementResponse.model_validate(record)
 
 
 def reverse_settlement(settlement_no: str, db: Session, principal: dict) -> SettlementResponse:
-    record = db.scalar(select(SettlementRecord).where(SettlementRecord.settlement_no == settlement_no))
+    record = db.scalar(
+        select(SettlementRecord)
+        .options(joinedload(SettlementRecord.items))
+        .where(SettlementRecord.settlement_no == settlement_no)
+    )
     if not record:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ErrorMessages.SETTLEMENT_NOT_FOUND)
     if record.status == "REVERSED":
@@ -67,7 +89,7 @@ def reverse_settlement(settlement_no: str, db: Session, principal: dict) -> Sett
 
 
 def query_settlements(db: Session, principal: dict, settlement_no: str | None, insured_id: str | None, start: date | None, end: date | None) -> list[SettlementResponse]:
-    statement = select(SettlementRecord)
+    statement = select(SettlementRecord).options(joinedload(SettlementRecord.items))
     if settlement_no:
         statement = statement.where(SettlementRecord.settlement_no == settlement_no)
     if insured_id:
@@ -76,5 +98,5 @@ def query_settlements(db: Session, principal: dict, settlement_no: str | None, i
         statement = statement.where(SettlementRecord.created_at >= datetime.combine(start, time.min))
     if end:
         statement = statement.where(SettlementRecord.created_at < datetime.combine(end + timedelta(days=1), time.min))
-    records = db.scalars(statement.order_by(SettlementRecord.created_at.desc())).all()
+    records = db.scalars(statement.order_by(SettlementRecord.created_at.desc())).unique().all()
     return [SettlementResponse.model_validate(record) for record in records]
